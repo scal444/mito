@@ -1,0 +1,27 @@
+Lipids - After initial talks with Eric on 5/30/18, lipid types will be POPC, DOPE, and cardiolipin.
+The DOPE cuz we want to match tail compositions with cardiolipin. The POPC because we want a neutral
+curvature lipid, DOPC might make it negative. 
+	Cardiolipin needs some work. Need to remake the chains to match 4-chain oleoyl set. Need 
+to validate that approach. In the meantime, run the PC and PE systems
+
+
+Flat areas - taken from equilibrium simulations, then a new bilayer is created using
+the average apl, in "flat_bilayers/lipidcomp/flat_correctarea.pdb", and used to create actual systems
+
+zos - The plan is to use concentration-weighted zos previously found. Note that these zos are at
+330 and we are at 310, but I fould only a .01 nm difference in DMPC between 300 and 330K. So for 
+80/20 PC PE it would be 0.8 * (zo_PC) + 0.2 * (zo_PE)
+
+Geometries. We'll go with cristae width of 20 nm (R_cylinder = 10 nm). Might as well match 
+that for the junction. Will make a 30 nm long cylinder (so it could fit 3 ATP synthase dimers if
+we want to add those later (D-dimer = 13 nm). Want flat region to about match area of cylinder.
+	A_cylinder = 30 * 2 * pi * 10 = 1885 nm^2
+	A_flat = (L_flat ^2) - pi * (20 ^2)     - the 20 is r_junction + r_cylinder
+	L_flat = sqrt( A_flat + pi * 20^2) = 56 nm
+So, r_cylinder=100A, r_junction=100A, l_cylinder=300A, l_flat=560A
+The default buffer in bumpy the gives about 6 nm between the extremes of the leaflets. Can keep that
+
+
+7/19/18
+Unfortunately, for the non-restrained systems the 6 nm buffer was insufficient, due to morphology changes. Those
+systems need to be rerun. Cool results though, the PE containing system showed less shape change than the pure PC
