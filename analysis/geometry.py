@@ -52,3 +52,27 @@ def assign_to_mito_section(rho, z, mito_dims):
     in_junction = np.where((np.abs(z) >= (mito_dims.l_cylinder / 2)) &
                            (rho <= (mito_dims.r_cylinder + mito_dims.r_junction)))[0]
     return in_cylinder, in_flat, in_junction
+
+
+def map_to_cyl_regime(z, mito_shape):
+    ''' The mapping of the cylindrical regime is just 0 = center, l_cylinder  / 2 = edge'''
+    return np.abs(z)
+
+
+def map_to_flat_regime(rho, mito_shape):
+    ''' rho of 0 is the edge of the junction - no outer edge '''
+    return rho - mito_shape.r_cylinder - mito_shape.r_junction
+
+
+def map_to_junction_regime(z, rho, mito_shape):
+    ''' Angular description only to start - as a distance based one would require averaging the radii of all particles
+       in the description. 0 degrees  = cylinder end, 90 degrees = flat end
+    '''
+
+    # first center coordinates relative to "circle" that describes the junction
+    centered_z = np.abs(z) - (mito_shape.l_cylinder / 2)
+    centered_rho = rho - mito_shape.r_cylinder - mito_shape.r_junction
+
+    # coordinates are now in second quadrant of circle, subtract by 90 to get to convention
+    # remember than arctan2 goes (y, x)
+    return np.arctan2(centered_z, centered_rho) * 180 / np.pi  - 90

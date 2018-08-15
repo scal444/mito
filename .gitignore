@@ -5,3 +5,5 @@ results
 *.mpg 
 *.jpg
 *.png
+*.pyc
+*__pycache__

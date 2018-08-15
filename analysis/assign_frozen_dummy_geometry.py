@@ -39,10 +39,10 @@ if __name__ == '__main__':
     raw_data_dir          = top_dir + 'simulations/'
 
     # mito geometry info
-    mito_dims = geometry.mito_dims(30, 10, 10, 56)
+    mito_shape = geometry.mito_dims(30, 10, 10, 56)
 
     # example data setup
-    dummy_forces_path = raw_data_dir + 'frozen_dummy/dummy_force.xvg'
+    dummy_forces_path = raw_data_dir + 'frozen_dummy/forces.xvg'
     dummy_coord_path  = raw_data_dir + 'dummy/POPC_100/dummy_only.pdb'
     dummy_index_path  = raw_data_dir + 'dummy/POPC_100/index.ndx'
 
@@ -53,7 +53,7 @@ if __name__ == '__main__':
     top_dummy_ind, bot_dummy_ind = load_dummy_indices(dummy_index_path)
 
     # get center, calculate vectors from center
-    mito_center = geometry.get_mito_center(dummy_pdb.xyz.squeeze(), mito_dims)
+    mito_center = geometry.get_mito_center(dummy_pdb.xyz.squeeze(), mito_shape)
     mito_center_scaled = mito_center[np.newaxis, :].repeat(dummy_coords.shape[0], axis=0)[np.newaxis, :, :]
     mito_vecs   = periodic.calc_vectors(mito_center_scaled, dummy_coords[np.newaxis, :, :], dummy_pdb.unitcell_lengths)
     theta, rho, z = transformations.cart2pol(mito_vecs.squeeze())
