@@ -42,12 +42,12 @@ if __name__ == '__main__':
     mito_shape = geometry.mito_dims(30, 10, 10, 56)
 
     # example data setup
-    dummy_forces_path = raw_data_dir + 'frozen_dummy/forces.xvg'
+    dummy_forces_path = raw_data_dir + 'frozen_dummy/dummy_force.xvg'
     dummy_coord_path  = raw_data_dir + 'dummy/POPC_100/dummy_only.pdb'
     dummy_index_path  = raw_data_dir + 'dummy/POPC_100/index.ndx'
 
     # load data
-    dummy_foces = file_io.load_xvg(dummy_forces_path)
+    dummy_forces = file_io.load_xvg(dummy_forces_path)
     dummy_pdb   = md.load(dummy_coord_path)
     dummy_coords = dummy_pdb.xyz.squeeze()
     top_dummy_ind, bot_dummy_ind = load_dummy_indices(dummy_index_path)
@@ -57,3 +57,13 @@ if __name__ == '__main__':
     mito_center_scaled = mito_center[np.newaxis, :].repeat(dummy_coords.shape[0], axis=0)[np.newaxis, :, :]
     mito_vecs   = periodic.calc_vectors(mito_center_scaled, dummy_coords[np.newaxis, :, :], dummy_pdb.unitcell_lengths)
     theta, rho, z = transformations.cart2pol(mito_vecs.squeeze())
+
+    partitioned_dummy_indices = assign_dummy_particles_to_section(rho, z, top_dummy_ind, bot_dummy_ind, mito_shape)
+    outer_cyl_coord = geometry.map_to_cyl_regime(z[partitioned_dummy_indices.outer_cylinder], mito_shape)
+    outer_junc_coord = geometry.map_to_junction_regime(z[partitioned_dummy_indices.outer_junction],
+                                                       rho[partitioned_dummy_indices.outer_junction], mito_shape)
+    outer_flat_coord = geometry.map_to_flat_regime(rho[partitioned_dummy_indices.outer_flat], mito_shape)
+
+    outer_cyl_force  = np.sqrt((dummy_forces[:, partitioned_dummy_indices.outer_cylinder, :] ** 2).sum(axis=2)).mean(axis=0)
+    outer_junc_force = np.sqrt((dummy_forces[:, partitioned_dummy_indices.outer_junction, :] ** 2).sum(axis=2)).mean(axis=0)
+    outer_flat_force = np.sqrt((dummy_forces[:, partitioned_dummy_indices.outer_flat, :] ** 2).sum(axis=2)).mean(axis=0)
