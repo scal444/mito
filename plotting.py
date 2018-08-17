@@ -19,3 +19,14 @@ def plot_3_regimes(cyl_x, cyl_y, junc_x, junc_y, flat_x, flat_y, mito_shape):
     axarr[2].set_xlabel("cylinder coordinate (nm)")
 
     plt.show()
+
+
+def scatter_geometry(cyl_z, cyl_rho, cyl_force, junc_z, junc_rho, junc_force,
+                     flat_z, flat_rho, flat_force, mito_shape):
+    plt.scatter(cyl_rho,   cyl_z,  c=cyl_force, cmap='reds', vmin=0, vmax=0.5)
+    plt.scatter(junc_rho, junc_z, c=junc_force, cmap='reds', vmin=0, vmax=0.5)
+    plt.scatter(flat_rho, flat_z, c=flat_force, cmap='reds', vmin=0, vmax=0.5)
+    plt.colorbar(label="force (kJ/mol * nm)")
+    plt.xlabel("rho (nm)")
+    plt.ylabel("z (nm)")
+    plt.show()

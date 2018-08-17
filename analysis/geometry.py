@@ -75,4 +75,18 @@ def map_to_junction_regime(z, rho, mito_shape):
 
     # coordinates are now in second quadrant of circle, subtract by 90 to get to convention
     # remember than arctan2 goes (y, x)
-    return np.arctan2(centered_z, centered_rho) * 180 / np.pi  - 90
+    return 180 - np.arctan2(centered_z, centered_rho) * 180 / np.pi
+
+
+def map_to_unified_coordinate(z, rho, mito_shape):
+    in_cyl, in_flat, in_junc = assign_to_mito_section(rho, z, mito_shape)
+
+    junc_offset = mito_shape.l_cylinder / 2
+    flat_offset = junc_offset + np.pi * mito_shape.r_junction / 2
+
+    unified_coordinate = np.zeros(z.shape)
+    unified_coordinate[in_cyl] = np.abs(z[in_cyl])
+    unified_coordinate[in_junc] = map_to_junction_regime(z[in_junc], rho[in_junc], mito_shape) * mito_shape.r_junction / (180 / np.pi) + junc_offset  # noqa
+    unified_coordinate[in_flat] = map_to_flat_regime(rho[in_flat], mito_shape) + flat_offset
+
+    return unified_coordinate
