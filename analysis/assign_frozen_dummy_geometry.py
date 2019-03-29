@@ -1,5 +1,7 @@
 import numpy as np
 import mdtraj as md
+import sys
+sys.path.append('/home/kjb09011/python/')
 import KB_python.file_io as file_io
 import KB_python.coordinate_manipulation.periodic as periodic
 import KB_python.coordinate_manipulation.transformations as transformations
@@ -63,10 +65,9 @@ def load_raw_forces(path):
     return file_io.xvg_2_coords(file_io.load_large_text_file(path), 3)
 
 
-# ----------------------------------------------------------------------------------------------------------------------
-# mito coordinate loading
 # ---------------------------------------------------------------------------------------------------------------------
-
+# data classes
+# ---------------------------------------------------------------------------------------------------------------------
 
 class mito_coordinates:
     ''' Compiled coordinate description of mito system. Can be used for dummy or lipid data'''
@@ -77,15 +78,29 @@ class mito_coordinates:
         self.unified = unified
 
 
-class dummy_leaflet_data:
+class raw_dummy_leaflet_data:
     def __init__(self, mito_coordinates, mito_shape, forces=None):
         # instance of mito_coordinates
         self.coordinates = mito_coordinates
         # instance of mito_shape
         self.mito_shape = mito_shape
         # n_frames * nparts * 3 array
-        if forces:
+        if forces is not None:
             self.forces = forces
+
+
+dummy_leaflet_data = raw_dummy_leaflet_data
+
+
+class processed_dummy_leaflet_data:
+    def __init__(self, mito_coordinates, forces, force_errors):
+        # instance of mito_coordinates
+        self.coordinates = mito_coordinates
+        # instance of mito_shape
+        self.mito_shape = mito_shape
+        # THIS IS TIME AVERAGED
+        self.force = forces
+        self.force_errors = force_errors
 
 
 class lipid_leaflet_data:
@@ -98,6 +113,11 @@ class lipid_leaflet_data:
         self.mito_shape = mito_shape
 
 
+# ----------------------------------------------------------------------------------------------------------------------
+# general coordinate processing
+# ---------------------------------------------------------------------------------------------------------------------
+
+
 def cart_2_mito(coords, unitcell_lengths, mito_center):
     '''
         Does a cartesian to polar transformation on trajectory data, based on a given center point. Accounts for periodic
@@ -105,8 +125,15 @@ def cart_2_mito(coords, unitcell_lengths, mito_center):
 
     '''
     mito_center_scaled = mito_center[np.newaxis, :].repeat(coords.shape[1], axis=0)[np.newaxis, :, :]
+    if coords.shape[0] > 1:
+        mito_center_scaled = mito_center_scaled.repeat(coords.shape[0], axis=0)
     mito_vecs   = periodic.calc_vectors(mito_center_scaled, coords, unitcell_lengths)
     return transformations.cart2pol(mito_vecs.squeeze())
+
+
+# ---------------------------------------------------------------------------------------------------------------------
+# dummy loading functions
+# ---------------------------------------------------------------------------------------------------------------------
 
 
 def load_and_split_dummy_pdb(pdbpath, indexpath, mito_shape, zo):
@@ -136,24 +163,30 @@ def load_and_split_dummy_pdb(pdbpath, indexpath, mito_shape, zo):
 def load_and_split_dummy_forces(forcepath, indexpath):
     dummy_forces = load_raw_forces(forcepath)
     dummy_inner, dummy_outer = load_dummy_indices(indexpath)
-    return dummy_forces[:, dummy_inner, :], dummy_forces[:, dummy_inner, dummy_outer]
+    return dummy_forces[:, dummy_inner, :], dummy_forces[:, dummy_outer, :]
 
 
 def load_all_dummy_info(pdbpath, forcepath, indexpath, mito_shape, zo):
-    inner_coords, outer_coords = load_and_split_dummy_pdb()
+    inner_coords, outer_coords = load_and_split_dummy_pdb(pdbpath, indexpath, mito_shape, zo)
+    inner_forces, outer_forces = load_and_split_dummy_forces(forcepath, indexpath)
+
+    outer_mito_shape = geometry.mito_dims(mito_shape.l_cylinder,      mito_shape.r_cylinder + zo,
+                                          mito_shape.r_junction - zo, mito_shape.l_flat)
+    inner_mito_shape = geometry.mito_dims(mito_shape.l_cylinder,      mito_shape.r_cylinder - zo,
+                                          mito_shape.r_junction + zo, mito_shape.l_flat)
+
+    return raw_dummy_leaflet_data(inner_coords, inner_mito_shape, forces=inner_forces), raw_dummy_leaflet_data(outer_coords, outer_mito_shape, forces=outer_forces)
 
 
-
-def load_mito_traj(trajpath, pdbpath, mito_shape, center):
-    traj = md.load(trajpath, top=pdbpath)
-    theta, rho, z = cart_2_mito(traj.xyz, traj.unitcell_lengths, mito_shape, center)
-    unified_coord = geometry.map_to_unified_coordinate(z, rho, mito_shape)
-    return mito_coordinates(theta, rho, z, unified_coord)
+# ---------------------------------------------------------------------------------------------------------------------
+# force analysis
+# ---------------------------------------------------------------------------------------------------------------------
 
 
-def process_dummy_leaflet_forces(unified_coord, forces, bins):
-    force_avg_per_bead = np.sqrt((forces.mean(axis=0) ** 2).sum(axis=1))
-    bin_assignments = np.digitize(unified_coord, bins)
+def process_dummy_leaflet_forces(raw_dummy_data, bins, firstframe, lastframe):
+
+    force_avg_per_bead = np.sqrt((raw_dummy_data.forces[firstframe:lastframe, :, :].mean(axis=0) ** 2).sum(axis=1))
+    bin_assignments = np.digitize(raw_dummy_data.coordinates.unified, bins)
     forces_by_bin = np.zeros(len(bins) - 1)
     forces_errors_by_bin   = np.zeros(len(bins) - 1)
     for bin_ind in range(1, len(bins)):
@@ -163,40 +196,28 @@ def process_dummy_leaflet_forces(unified_coord, forces, bins):
     return forces_by_bin, forces_errors_by_bin
 
 
-def process_dummy_system(path, dummy_thickness, mito_shape, forcepath='/force.xvg', indexpath='/index.ndx',
-                         coordpath='/dummy_only.pdb', firstframe=0):
+def process_dummy_system(raw_dummy_data, bin_spacing, firstframe=0, lastframe=None):
+    if not lastframe:
+        lastframe = raw_dummy_data.forces.shape[0]
 
-    dummy_forces, dummy_pdb, top_dummy_ind, bot_dummy_ind = load_dummy_data(forcepath=path + forcepath,
-                                                                            coordpath=path + coordpath,
-                                                                            indexpath=path + indexpath)
-    outer_mito_shape = geometry.mito_dims(mito_shape.l_cylinder,                   mito_shape.r_cylinder + dummy_thickness,
-                                          mito_shape.r_junction - dummy_thickness, mito_shape.l_flat)
-    inner_mito_shape = geometry.mito_dims(mito_shape.l_cylinder,                   mito_shape.r_cylinder - dummy_thickness,
-                                          mito_shape.r_junction + dummy_thickness, mito_shape.l_flat)
-    theta, rho, z = cart_2_mito(dummy_pdb, mito_shape)
-    partitioned_dummy_indices = assign_dummy_particles_to_section(rho, z, top_dummy_ind, bot_dummy_ind, mito_shape)
-    outer_unified_coord = geometry.map_to_unified_coordinate(z[bot_dummy_ind], rho[bot_dummy_ind], outer_mito_shape)
-    inner_unified_coord = geometry.map_to_unified_coordinate(z[top_dummy_ind], rho[top_dummy_ind], inner_mito_shape)
+    bins = np.arange(0, raw_dummy_data.coordinates.unified.max(), bin_spacing)
+    bin_centers = (bins[1:] + bins[:-1]) / 2
+    force_means, force_errors = process_dummy_leaflet_forces(raw_dummy_data, bins, firstframe, lastframe=lastframe)
+    z = geometry.unified_to_z(raw_dummy_data.mito_shape, bin_centers)
+    rho = geometry.unified_to_rho(raw_dummy_data.mito_shape, bin_centers)
+    bin_coords = mito_coordinates(0, rho, z, bin_centers)
 
-    bin_spacing = 1
-    outer_bins = np.arange(0, outer_unified_coord.max() + bin_spacing / 2, bin_spacing)
-    inner_bins = np.arange(0, inner_unified_coord.max() + bin_spacing / 2, bin_spacing)
-    outer_bin_centers = (outer_bins[1:] + outer_bins[:-1]) / 2
-    inner_bin_centers = (inner_bins[1:] + inner_bins[:-1]) / 2
+    return processed_dummy_leaflet_data(bin_coords, force_means, force_errors)
 
-    inner_force_means, inner_force_errors = process_dummy_leaflet_forces(inner_unified_coord,
-                                                                         dummy_forces[firstframe:, partitioned_dummy_indices.inner, :],
-                                                                         inner_bins)
-    outer_force_means, outer_force_errors = process_dummy_leaflet_forces(outer_unified_coord,
-                                                                         dummy_forces[firstframe:, partitioned_dummy_indices.outer, :],
-                                                                         outer_bins)
 
-    outer_rho = [geometry.unified_to_rho(outer_mito_shape, i) for i in outer_bin_centers]
-    inner_rho = [geometry.unified_to_rho(inner_mito_shape, i) for i in inner_bin_centers]
-    outer_z = [geometry.unified_to_z(outer_mito_shape, i) for i in outer_bin_centers]
-    inner_z = [geometry.unified_to_z(inner_mito_shape, i) for i in inner_bin_centers]
-    return dummy_data(inner_rho, inner_z, inner_unified_coord, inner_force_means, outer_rho, outer_z, outer_unified_coord, outer_force_means )
+# ---------------------------------------------------------------------------------------------------------------------
+# coordinate analysis
+# ---------------------------------------------------------------------------------------------------------------------
 
+
+# ---------------------------------------------------------------------------------------------------------------------
+# main analysis
+# -----------------------------------------------------------------------------------------------------------------------
 
 if __name__ == '__main__':
     # project directory setup
@@ -205,81 +226,85 @@ if __name__ == '__main__':
     intermediate_data_dir = top_dir + 'data/'
     raw_data_dir          = top_dir + 'simulations/'
 
-    firstframe = 1000
     # mito geometry info
     dummy_zo = 6.5 / 2
     mito_shape = geometry.mito_dims(30, 10, 10, 56)
-    inner_mito_shape = geometry.dims(30, 10 - dummy_zo, 10 + dummy_zo, 56)
-    outer_mito_shape = geometry.dims(30, 10 + dummy_zo, 10 - dummy_zo, 56)
+    inner_mito_shape = geometry.mito_dims(30, 10 - dummy_zo, 10 + dummy_zo, 56)
+    outer_mito_shape = geometry.mito_dims(30, 10 + dummy_zo, 10 - dummy_zo, 56)
 
-    top_dummy_ind, bot_dummy_ind = load_dummy_indices(dummy_index_path)
-    # get center, calculate vectors from center
-    theta, rho, z = cart_2_mito(dummy_pdb, mito_shape)
-    partitioned_dummy_indices = assign_dummy_particles_to_section(rho, z, top_dummy_ind, bot_dummy_ind, mito_shape)
-    top_unified_coord = geometry.map_to_unified_coordinate(z[top_dummy_ind], rho[top_dummy_ind], top_mito_shape)
-    bot_unified_coord = geometry.map_to_unified_coordinate(z[bot_dummy_ind], rho[bot_dummy_ind], bot_mito_shape)
+    # Shouldn't have to reload raw data every time - instead, load from pickle
+    load_raw = False
+    if load_raw:
+        # POPC test case
+        PC_path = raw_data_dir + 'dummy_frozen/POPC_100/'
+        POPC_inner_dummy_data, POPC_outer_dummy_data = load_all_dummy_info(PC_path + 'dummy_only.pdb', PC_path + 'forces_further_reduced.xvg',
+                                                                           PC_path + 'index.ndx', mito_shape, dummy_zo)
+        pickle_save(POPC_inner_dummy_data, PC_path + "inner_dummy_data.pkl")
+        pickle_save(POPC_outer_dummy_data, PC_path + "outer_dummy_data.pkl")
 
-    bin_spacing = 1
-    top_bins = np.arange(0, top_unified_coord.max() + bin_spacing / 2, bin_spacing)
-    bot_bins = np.arange(0, bot_unified_coord.max() + bin_spacing / 2, bin_spacing)
-    top_bin_centers = (top_bins[1:] + top_bins[:-1]) / 2
-    bot_bin_centers = (bot_bins[1:] + bot_bins[:-1]) / 2
-    # double areas to account for up/down
-    top_bin_areas = 2 * np.array([geometry.calc_unified_section_area(top_mito_shape, i, i + 1) for i in top_bins[:-1]])
-    bot_bin_areas = 2 * np.array([geometry.calc_unified_section_area(bot_mito_shape, i, i + 1) for i in bot_bins[:-1]])
-    top_bin_counts = np.bincount(np.digitize(top_unified_coord, top_bins))[1:]
-    bot_bin_counts = np.bincount(np.digitize(bot_unified_coord, bot_bins))[1:]
+        # POPE test case
+        PE_path = raw_data_dir + 'dummy_frozen/POPC80_DOPE20/'
+        DOPE_inner_dummy_data, DOPE_outer_dummy_data = load_all_dummy_info(PE_path + 'dummy_only.pdb', PE_path + 'forces_further_reduced.xvg',
+                                                                           PE_path + 'index.ndx', mito_shape, dummy_zo)
+        pickle_save(DOPE_inner_dummy_data, PE_path + "inner_dummy_data.pkl")
+        pickle_save(DOPE_outer_dummy_data, PE_path + "outer_dummy_data.pkl")
 
-    inner_force_means, inner_force_errors = process_dummy_leaflet_forces(top_unified_coord,
-                                                                         dummy_forces[firstframe:, partitioned_dummy_indices.inner, :],
-                                                                         top_bins)
-    outer_force_means, outer_force_errors = process_dummy_leaflet_forces(bot_unified_coord,
-                                                                         dummy_forces[firstframe:, partitioned_dummy_indices.outer, :],
-                                                                         bot_bins)
+        # TOCL test case
+        CL_path = raw_data_dir + 'dummy_frozen/POPC80_TOCL20/'
+        TOCL_inner_dummy_data, TOCL_outer_dummy_data = load_all_dummy_info(CL_path + 'dummy_only.pdb', CL_path + 'forces_further_reduced.xvg',
+                                                                           CL_path + 'index.ndx', mito_shape, dummy_zo)
+        pickle_save(TOCL_inner_dummy_data, CL_path + "inner_dummy_data.pkl")
+        pickle_save(TOCL_outer_dummy_data, CL_path + "outer_dummy_data.pkl")
 
-    top_rho = [geometry.unified_to_rho(top_mito_shape, i) for i in top_bin_centers]
-    bot_rho = [geometry.unified_to_rho(bot_mito_shape, i) for i in bot_bin_centers]
-    top_z = [geometry.unified_to_z(top_mito_shape, i) for i in top_bin_centers]
-    bot_z = [geometry.unified_to_z(bot_mito_shape, i) for i in bot_bin_centers]
+        CL_ions_path = raw_data_dir + 'dummy_frozen/POPC80_TOCL20_ions/'
+        TOCL_ions_inner_dummy_data, TOCL_ions_outer_dummy_data = load_all_dummy_info(CL_ions_path + 'dummy_only.pdb', CL_ions_path + 'forces_reduced.xvg',
+                                                                                     CL_ions_path + 'index.ndx', mito_shape, dummy_zo)
+        pickle_save(TOCL_ions_inner_dummy_data, CL_ions_path + "inner_dummy_data.pkl")
+        pickle_save(TOCL_ions_outer_dummy_data, CL_ions_path + "outer_dummy_data.pkl")
 
+    # analysis parameters
+    firstframe = 100
+    bin_width = 0.1
 
+    POPC_inner_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC_100/inner_dummy_data.pkl')
+    POPC_outer_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC_100/outer_dummy_data.pkl')
+    POPC_inner_processed = process_dummy_system(POPC_inner_dummy_data, 1, firstframe=300)
+    POPC_outer_processed = process_dummy_system(POPC_outer_dummy_data, 1, firstframe=300)
 
-    max_force = 0.0699768 * 4
+    TOCL_inner_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_TOCL20/inner_dummy_data.pkl')
+    TOCL_outer_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_TOCL20/outer_dummy_data.pkl')
+    TOCL_inner_processed = process_dummy_system(TOCL_inner_dummy_data, 1, firstframe=400)
+    TOCL_outer_processed = process_dummy_system(TOCL_outer_dummy_data, 1, firstframe=400)
 
+    DOPE_inner_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_DOPE20/inner_dummy_data.pkl')
+    DOPE_outer_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_DOPE20/outer_dummy_data.pkl')
+    DOPE_inner_processed = process_dummy_system(DOPE_inner_dummy_data, 1, firstframe=300)
+    DOPE_outer_processed = process_dummy_system(DOPE_outer_dummy_data, 1, firstframe=300)
 
-    popc_path = '/home/kevin/hdd/Projects/mito/simulations/dummy_frozen/POPC_100'
-    dope_path = '/home/kevin/hdd/Projects/mito/simulations/dummy_frozen/POPC80_DOPE20'
-    tocl_path = '/home/kevin/hdd/Projects/mito/simulations/dummy_frozen/POPC80_TOCL20'
+    TOCL_ions_inner_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_TOCL20_ions/inner_dummy_data.pkl')
+    TOCL_ions_outer_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_TOCL20_ions/outer_dummy_data.pkl')
+    TOCL_ions_inner_processed = process_dummy_system(TOCL_ions_inner_dummy_data, 1, firstframe=600)
+    TOCL_ions_outer_processed = process_dummy_system(TOCL_ions_outer_dummy_data, 1, firstframe=600)
 
-    mito_shape = geometry.mito_dims(30, 10, 10, 56)
-    firstframe = 2000
-    popc_data = process_dummy_system(popc_path, 6.5 / 2, mito_shape, firstframe=firstframe)
-    tocl_data = process_dummy_system(tocl_path, 6.5 / 2, mito_shape, firstframe=firstframe)
-    dope_data = process_dummy_system(dope_path, 6.5 / 2, mito_shape, firstframe=firstframe)
+    def plot_processed_data(inner_data, outer_data, cmax, cmap='Reds'):
+        plt.figure()
+        plt.scatter(inner_data.coordinates.rho, inner_data.coordinates.z, vmin=0, vmax=cmax, c=4 * inner_data.force, cmap=cmap)
+        plt.scatter(outer_data.coordinates.rho, outer_data.coordinates.z, vmin=0, vmax=cmax, c=4 * outer_data.force, cmap=cmap)
+        plt.xlabel("rho (nm)")
+        plt.ylabel("z (nm)")
+        plt.colorbar()
+        plt.show()
+
+    plot_processed_data(TOCL_ions_inner_processed, TOCL_ions_outer_processed, 0.35)
+    plot_processed_data(TOCL_inner_processed, TOCL_outer_processed, 0.35)
+    plot_processed_data(DOPE_inner_processed, DOPE_outer_processed, 0.35)
+    plot_processed_data(POPC_inner_processed, POPC_outer_processed, 0.35)
 
     plt.figure()
-    plt.scatter(tocl_data.inner_rho, tocl_data.inner_z, c=tocl_data.inner_force * 4, cmap='Reds', vmin=0, vmax=max_force)
-    plt.scatter(tocl_data.outer_rho, tocl_data.outer_z, c=tocl_data.outer_force * 4, cmap='Reds', vmin=0, vmax=max_force)
-    plt.title('tocl')
-    plt.xlabel("rho (nm)")
-    plt.ylabel("z (nm)")
-    cbar = plt.colorbar()
-    cbar.set_label("pressure (kJ / (mol nm ^3))")
-
-    plt.figure()
-    plt.scatter(dope_data.inner_rho, dope_data.inner_z, c=dope_data.inner_force * 4, cmap='Reds', vmin=0, vmax=max_force)
-    plt.scatter(dope_data.outer_rho, dope_data.outer_z, c=dope_data.outer_force * 4, cmap='Reds', vmin=0, vmax=max_force)
-    plt.title('dope')
-    plt.xlabel("rho (nm)")
-    plt.ylabel("z (nm)")
-    cbar = plt.colorbar()
-    cbar.set_label("pressure (kJ / (mol nm ^3))")
-
-    plt.figure()
-    plt.scatter(popc_data.inner_rho, popc_data.inner_z, c=popc_data.inner_force * 4, cmap='Reds', vmin=0, vmax=max_force)
-    plt.scatter(popc_data.outer_rho, popc_data.outer_z, c=popc_data.outer_force * 4, cmap='Reds', vmin=0, vmax=max_force)
-    plt.title('popc')
-    plt.xlabel("rho (nm)")
-    plt.ylabel("z (nm)")
-    cbar = plt.colorbar()
-    cbar.set_label("pressure (kJ / (mol nm ^3))")
+    plt.plot(POPC_inner_processed.coordinates.unified, 4 * POPC_inner_processed.force, 'r-', label='100% POPC')
+    plt.plot(DOPE_inner_processed.coordinates.unified, 4 * DOPE_inner_processed.force, 'r-', label='20% DOPE')
+    plt.plot(TOCL_inner_processed.coordinates.unified, 4 * TOCL_inner_processed.force, 'r-', label='20% TOCL')
+    plt.plot(TOCL_ions_inner_processed.coordinates.unified, 4 * TOCL_ions_inner_processed.force, 'r-', label='20% TOCL - ions')
+    plt.xlabel("unified coordinate (nm)")
+    plt.ylabel("Pressure (kJ/(mol nm^3)")
+    plt.legend()

@@ -47,10 +47,9 @@ def assign_to_mito_section(rho, z, mito_shape):
             in_junction - list of indices. union of in_cylinder, in_flat, in_junction is 0 to rho.size - 1
 
     '''
-    in_cylinder = np.where(np.abs(z) < (mito_shape.l_cylinder / 2))[0]
-    in_junction = np.where((np.abs(z) >= (mito_shape.l_cylinder / 2)) &
-                           (rho <= (mito_shape.r_cylinder + mito_shape.r_junction)))[0]
-    in_flat     = np.where(rho > (mito_shape.r_cylinder + mito_shape.r_junction))[0]
+    in_cylinder = np.abs(z) < (mito_shape.l_cylinder / 2)
+    in_junction = (np.abs(z) >= (mito_shape.l_cylinder / 2)) & (rho <= (mito_shape.r_cylinder + mito_shape.r_junction))
+    in_flat     = rho > (mito_shape.r_cylinder + mito_shape.r_junction)
 
     return in_cylinder, in_junction, in_flat
 
@@ -112,24 +111,29 @@ def unified_to_flat_radius(mito_dims, unified_coordinate):
 
 
 def unified_to_rho(mito_dims, unified_coordinate):
-    rho = mito_dims.r_cylinder
-    if unified_coordinate > mito_dims.l_cylinder / 2:
-        if unified_coordinate <= mito_dims.l_cylinder / 2 + mito_dims.r_junction * np.pi / 2:
-            j_angle = unified_to_junction_angle(mito_dims, unified_coordinate)
-            rho += mito_dims.r_junction * (1 - np.cos(j_angle))
-        else:
-            rho = unified_to_flat_radius(mito_dims, unified_coordinate)
+    rho = np.zeros(unified_coordinate.size) + mito_dims.r_cylinder
+
+    injuncregion = (unified_coordinate > mito_dims.l_cylinder / 2) & (unified_coordinate <= mito_dims.l_cylinder / 2 + mito_dims.r_junction * np.pi / 2)
+    inflatregion = unified_coordinate > (mito_dims.l_cylinder / 2 + mito_dims.r_junction * np.pi / 2)
+
+    j_angle = unified_to_junction_angle(mito_dims, unified_coordinate[injuncregion])
+    rho[injuncregion] = rho[injuncregion] + mito_dims.r_junction * (1 - np.cos(j_angle))
+
+    rho[inflatregion] = unified_to_flat_radius(mito_dims, unified_coordinate[inflatregion])
     return rho
 
 
 def unified_to_z(mito_dims, unified_coordinate):
-    if unified_coordinate <= mito_dims.l_cylinder / 2:
-        z = unified_coordinate
-    elif unified_coordinate < mito_dims.l_cylinder / 2 + mito_dims.r_junction * np.pi / 2:
-        j_angle = unified_to_junction_angle(mito_dims, unified_coordinate)
-        z = mito_dims.l_cylinder / 2 + mito_dims.r_junction * np.sin(j_angle)
-    else:
-        z = mito_dims.l_cylinder / 2 + mito_dims.r_junction
+    z = np.zeros(unified_coordinate.size)
+    incylregion = unified_coordinate <= (mito_dims.l_cylinder / 2)
+    inflatregion = unified_coordinate >= mito_dims.l_cylinder / 2 + mito_dims.r_junction * np.pi / 2
+    injuncregion = ((~incylregion) & (~ inflatregion))
+
+    z[incylregion] = unified_coordinate[incylregion]
+    j_angle = unified_to_junction_angle(mito_dims, unified_coordinate[injuncregion])
+    z[injuncregion] = mito_dims.l_cylinder / 2 + mito_dims.r_junction * np.sin(j_angle)
+
+    z[inflatregion] = mito_dims.l_cylinder / 2 + mito_dims.r_junction
     return z
 
 
