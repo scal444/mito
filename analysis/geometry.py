@@ -1,4 +1,6 @@
 import numpy as np
+import KB_python.coordinate_manipulation.periodic as periodic
+import KB_python.coordinate_manipulation.transformations as transformations
 
 
 class mito_dims:
@@ -8,6 +10,19 @@ class mito_dims:
         self.r_cylinder = r_cylinder
         self.r_junction = r_junction
         self.l_flat  = l_flat
+
+
+def cart_2_mito(coords, unitcell_lengths, mito_center):
+    '''
+        Does a cartesian to polar transformation on trajectory data, based on a given center point. Accounts for periodic
+        boundaries by calling periodic.calc_vectors
+
+    '''
+    mito_center_scaled = mito_center[np.newaxis, :].repeat(coords.shape[1], axis=0)[np.newaxis, :, :]
+    if coords.shape[0] > 1:
+        mito_center_scaled = mito_center_scaled.repeat(coords.shape[0], axis=0)
+    mito_vecs   = periodic.calc_vectors(mito_center_scaled, coords, unitcell_lengths)
+    return transformations.cart2pol(mito_vecs.squeeze())
 
 
 def get_mito_center(coords, l_cylinder):

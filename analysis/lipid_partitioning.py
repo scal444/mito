@@ -149,10 +149,9 @@ def load_and_process_spatial_data(centerpath, datapath, prefix, mito_shape, n_li
     return minor_component_fraction, bin_coordinates
 
 
-if __name__ == "__main__":
-
-    topdir  = '/home/kevin/hdd/Projects/mito/simulations/dummy_frozen/POPC80_DOPE20/python/'
-    mito_shape = geometry.mito_dims(30, 10, 10, 56)
-    inner_component = np.loadtxt(topdir + 'inner_hg_minor_component_fraction.txt')
-    inner_coords = pickle_load(topdir + 'inner_hg_bin_centers.pkl')
-    outer_component = np.loadtxt(topdir + )
+topdir  = '/home/kevin/hdd/Projects/mito/simulations/dummy_frozen/POPC80_DOPE20/python/'
+mito_shape = geometry.mito_dims(30, 10, 10, 56)
+inner_component = np.loadtxt(topdir + 'inner_hg_minor_component_fraction.txt')
+inner_coords = pickle_load(topdir + 'inner_hg_bin_centers.pkl')
+outer_component = np.loadtxt(topdir + 'outer_hg_minor_component_fraction.txt')
+outer_coords = pickle_load(topdir + 'outer_hg_bin_centers.pkl')

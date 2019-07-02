@@ -1,28 +1,13 @@
 import numpy as np
 import mdtraj as md
 import sys
+import os
 sys.path.append('/home/kjb09011/python/')
 import KB_python.file_io as file_io
-import KB_python.coordinate_manipulation.periodic as periodic
-import KB_python.coordinate_manipulation.transformations as transformations
-import matplotlib.pyplot as plt
-import pickle
-
+from plotting import plot_dummy_forces_spatial
+from utilities import pickle_load, pickle_save, string_id
 import geometry
 
-# --------------------------------------------------------------------------------------------------------------------
-# pickle utilities
-# --------------------------------------------------------------------------------------------------------------------
-
-
-def pickle_save(obj, path):
-    with open(path, 'wb') as f:
-        pickle.dump(obj, f)
-
-
-def pickle_load(path):
-    with open(path, 'rb') as f:
-        return pickle.load(f)
 
 # ---------------------------------------------------------------------------------------------------------------------
 # index loading and processing
@@ -36,25 +21,6 @@ def load_dummy_indices(file):
     outer_dummy_ind = np.array(indices['bot_DUMY']) - indices['top_DUMY'][0]  # subtract from top! that's the 0 index
     return inner_dummy_ind, outer_dummy_ind
 
-
-def load_leaflet_indices():
-    pass
-
-
-class mito_sectional_indices:
-    def __init__(self, cylinder, junction,  flat):
-        self.cylinder = cylinder
-        self.junction = junction
-        self.flat     = flat
-
-
-def assign_dummy_particles_to_section(rho, z, mito_dims):
-    in_cylinder, in_junction, in_flat = geometry.assign_to_mito_section(rho, z, mito_dims)
-    return mito_sectional_indices(in_cylinder, in_junction, in_flat)
-
-
-def load_lipid_indices(file, lipid_names):
-    pass
 
 # ---------------------------------------------------------------------------------------------------------------------
 # load and process forces
@@ -89,9 +55,6 @@ class raw_dummy_leaflet_data:
             self.forces = forces
 
 
-dummy_leaflet_data = raw_dummy_leaflet_data
-
-
 class processed_dummy_leaflet_data:
     def __init__(self, mito_coordinates, forces, force_errors):
         # instance of mito_coordinates
@@ -103,36 +66,8 @@ class processed_dummy_leaflet_data:
         self.force_errors = force_errors
 
 
-class lipid_leaflet_data:
-    def __init__(self, mito_coordinates, lipid_indices, mito_shape):
-        # instance of mito_coordinates
-        self.coordinates = mito_coordinates
-        # dict of indices
-        self.lipid_indices = lipid_indices
-        # instance of mito_shape
-        self.mito_shape = mito_shape
-
-
-# ----------------------------------------------------------------------------------------------------------------------
-# general coordinate processing
 # ---------------------------------------------------------------------------------------------------------------------
-
-
-def cart_2_mito(coords, unitcell_lengths, mito_center):
-    '''
-        Does a cartesian to polar transformation on trajectory data, based on a given center point. Accounts for periodic
-        boundaries by calling periodic.calc_vectors
-
-    '''
-    mito_center_scaled = mito_center[np.newaxis, :].repeat(coords.shape[1], axis=0)[np.newaxis, :, :]
-    if coords.shape[0] > 1:
-        mito_center_scaled = mito_center_scaled.repeat(coords.shape[0], axis=0)
-    mito_vecs   = periodic.calc_vectors(mito_center_scaled, coords, unitcell_lengths)
-    return transformations.cart2pol(mito_vecs.squeeze())
-
-
-# ---------------------------------------------------------------------------------------------------------------------
-# dummy loading functions
+# functions for treating raw dummy data - should probably only call the load_and_serialize one
 # ---------------------------------------------------------------------------------------------------------------------
 
 
@@ -149,7 +84,7 @@ def load_and_split_dummy_pdb(pdbpath, indexpath, mito_shape, zo):
 
     # center and transform whole system
     center = geometry.get_mito_center(dummy_pdb.xyz.squeeze(), mito_shape.l_cylinder)  # don't need inner/outer, this only uses l_cylinder
-    theta, rho, z = cart_2_mito(dummy_pdb.xyz, dummy_pdb.unitcell_lengths, center)
+    theta, rho, z = geometry.cart_2_mito(dummy_pdb.xyz, dummy_pdb.unitcell_lengths, center)
 
     # unified coordinate is based on shape, so do separately
     inner_unified_coord = geometry.map_to_unified_coordinate(z[dummy_inner], rho[dummy_inner], inner_mito_shape)
@@ -177,6 +112,15 @@ def load_all_dummy_info(pdbpath, forcepath, indexpath, mito_shape, zo):
 
     return raw_dummy_leaflet_data(inner_coords, inner_mito_shape, forces=inner_forces), raw_dummy_leaflet_data(outer_coords, outer_mito_shape, forces=outer_forces)
 
+
+def load_and_serialize_raw_data(data_dir, save_dir, mito_geometry, dummy_zo, lipid,
+                                pdb="dummy_only.pdb", index="index.ndx", forces="forces.xvg"):
+    inner_dummy_data, outer_dummy_data = load_all_dummy_info(os.path.join(data_dir, pdb), os.path.join(data_dir, forces),
+                                                             os.path.join(data_dir, index), mito_geometry, dummy_zo)
+
+    save_str = "raw_dummy_{}".format(string_id(lipid, mito_geometry, dummy_zo))
+    pickle_save(inner_dummy_data, os.path.join(save_dir, save_str + "_inner.pkl"))
+    pickle_save(outer_dummy_data, os.path.join(save_dir, save_str + "_outer.pkl"))
 
 # ---------------------------------------------------------------------------------------------------------------------
 # force analysis
@@ -210,101 +154,67 @@ def process_dummy_system(raw_dummy_data, bin_spacing, firstframe=0, lastframe=No
     return processed_dummy_leaflet_data(bin_coords, force_means, force_errors)
 
 
-# ---------------------------------------------------------------------------------------------------------------------
-# coordinate analysis
-# ---------------------------------------------------------------------------------------------------------------------
+def load_and_process_serialized_data(data_dir, out_dir, geometry, lipid, dummy_zo, bin_spacing, first_frame):
+    id = string_id(lipid, geometry, dummy_zo)
+    load_str = "raw_dummy_{}".format(id)
+    save_str = "processed_dummy_{}".format(id)
+    inner_dummy_data = pickle_load(os.path.join(data_dir, load_str + "_inner.pkl"))
+    outer_dummy_data = pickle_load(os.path.join(data_dir, load_str + "_outer.pkl"))
+    inner_processed = process_dummy_system(inner_dummy_data, bin_spacing, firstframe=first_frame)
+    outer_processed = process_dummy_system(outer_dummy_data, bin_spacing, firstframe=first_frame)
+    pickle_save(inner_processed, os.path.join(out_dir, save_str + "_inner.pkl"))
+    pickle_save(outer_processed, os.path.join(out_dir, save_str + "_outer.pkl"))
 
+
+def load_processed_data(data_dir, geometry, lipid, zo):
+    id = string_id(lipid, geometry, zo)
+    return (pickle_load(os.path.join(data_dir, "processed_dummy_{}_inner.pkl".format(id))),
+            pickle_load(os.path.join(data_dir, "processed_dummy_{}_outer.pkl".format(id))))
 
 # ---------------------------------------------------------------------------------------------------------------------
 # main analysis
 # -----------------------------------------------------------------------------------------------------------------------
 
+
 if __name__ == '__main__':
     # project directory setup
     top_dir               = '/home/kevin/hdd/Projects/mito/'
     analysis_dir          = top_dir + 'analysis/'
-    intermediate_data_dir = top_dir + 'data/'
     raw_data_dir          = top_dir + 'simulations/'
 
     # mito geometry info
     dummy_zo = 6.5 / 2
     mito_shape = geometry.mito_dims(30, 10, 10, 56)
-    inner_mito_shape = geometry.mito_dims(30, 10 - dummy_zo, 10 + dummy_zo, 56)
-    outer_mito_shape = geometry.mito_dims(30, 10 + dummy_zo, 10 - dummy_zo, 56)
 
-    # Shouldn't have to reload raw data every time - instead, load from pickle
+    # step 1 - load (lots of) raw data
     load_raw = False
     if load_raw:
-        # POPC test case
-        PC_path = raw_data_dir + 'dummy_frozen/POPC_100/'
-        POPC_inner_dummy_data, POPC_outer_dummy_data = load_all_dummy_info(PC_path + 'dummy_only.pdb', PC_path + 'forces_further_reduced.xvg',
-                                                                           PC_path + 'index.ndx', mito_shape, dummy_zo)
-        pickle_save(POPC_inner_dummy_data, PC_path + "inner_dummy_data.pkl")
-        pickle_save(POPC_outer_dummy_data, PC_path + "outer_dummy_data.pkl")
+        save_dir = analysis_dir + "intermediate_data"
+        load_and_serialize_raw_data(raw_data_dir + 'dummy_frozen/POPC_100', save_dir, mito_shape, dummy_zo, "POPC",
+                                    forces="forces_further_reduced.xvg")
+        load_and_serialize_raw_data(raw_data_dir + 'dummy_frozen/POPC80_DOPE20', save_dir, mito_shape, dummy_zo,
+                                    "DOPE", forces="forces_further_reduced.xvg")
+        load_and_serialize_raw_data(raw_data_dir + 'dummy_frozen/POPC80_TOCL20', save_dir, mito_shape, dummy_zo,
+                                    "TOCL", forces="forces_further_reduced.xvg")
 
-        # POPE test case
-        PE_path = raw_data_dir + 'dummy_frozen/POPC80_DOPE20/'
-        DOPE_inner_dummy_data, DOPE_outer_dummy_data = load_all_dummy_info(PE_path + 'dummy_only.pdb', PE_path + 'forces_further_reduced.xvg',
-                                                                           PE_path + 'index.ndx', mito_shape, dummy_zo)
-        pickle_save(DOPE_inner_dummy_data, PE_path + "inner_dummy_data.pkl")
-        pickle_save(DOPE_outer_dummy_data, PE_path + "outer_dummy_data.pkl")
+    # step 2 - load serialized data, process, save processed data
+    load_serialized = False
+    if load_serialized:
+        # analysis parameters
+        firstframe = 100
+        bin_width = 1
+        read_dir = analysis_dir + "intermediate_data"
+        write_dir = analysis_dir + "processed_data"
+        load_and_process_serialized_data(read_dir, write_dir, mito_shape, "POPC", dummy_zo, bin_width, firstframe)
+        load_and_process_serialized_data(read_dir, write_dir, mito_shape, "DOPE", dummy_zo, bin_width, firstframe)
+        load_and_process_serialized_data(read_dir, write_dir, mito_shape, "TOCL", dummy_zo, bin_width, firstframe)
 
-        # TOCL test case
-        CL_path = raw_data_dir + 'dummy_frozen/POPC80_TOCL20/'
-        TOCL_inner_dummy_data, TOCL_outer_dummy_data = load_all_dummy_info(CL_path + 'dummy_only.pdb', CL_path + 'forces_further_reduced.xvg',
-                                                                           CL_path + 'index.ndx', mito_shape, dummy_zo)
-        pickle_save(TOCL_inner_dummy_data, CL_path + "inner_dummy_data.pkl")
-        pickle_save(TOCL_outer_dummy_data, CL_path + "outer_dummy_data.pkl")
-
-        CL_ions_path = raw_data_dir + 'dummy_frozen/POPC80_TOCL20_ions/'
-        TOCL_ions_inner_dummy_data, TOCL_ions_outer_dummy_data = load_all_dummy_info(CL_ions_path + 'dummy_only.pdb', CL_ions_path + 'forces_reduced.xvg',
-                                                                                     CL_ions_path + 'index.ndx', mito_shape, dummy_zo)
-        pickle_save(TOCL_ions_inner_dummy_data, CL_ions_path + "inner_dummy_data.pkl")
-        pickle_save(TOCL_ions_outer_dummy_data, CL_ions_path + "outer_dummy_data.pkl")
-
-    # analysis parameters
-    firstframe = 100
-    bin_width = 0.1
-
-    POPC_inner_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC_100/inner_dummy_data.pkl')
-    POPC_outer_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC_100/outer_dummy_data.pkl')
-    POPC_inner_processed = process_dummy_system(POPC_inner_dummy_data, 1, firstframe=300)
-    POPC_outer_processed = process_dummy_system(POPC_outer_dummy_data, 1, firstframe=300)
-
-    TOCL_inner_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_TOCL20/inner_dummy_data.pkl')
-    TOCL_outer_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_TOCL20/outer_dummy_data.pkl')
-    TOCL_inner_processed = process_dummy_system(TOCL_inner_dummy_data, 1, firstframe=400)
-    TOCL_outer_processed = process_dummy_system(TOCL_outer_dummy_data, 1, firstframe=400)
-
-    DOPE_inner_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_DOPE20/inner_dummy_data.pkl')
-    DOPE_outer_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_DOPE20/outer_dummy_data.pkl')
-    DOPE_inner_processed = process_dummy_system(DOPE_inner_dummy_data, 1, firstframe=300)
-    DOPE_outer_processed = process_dummy_system(DOPE_outer_dummy_data, 1, firstframe=300)
-
-    TOCL_ions_inner_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_TOCL20_ions/inner_dummy_data.pkl')
-    TOCL_ions_outer_dummy_data = pickle_load(raw_data_dir + 'dummy_frozen/POPC80_TOCL20_ions/outer_dummy_data.pkl')
-    TOCL_ions_inner_processed = process_dummy_system(TOCL_ions_inner_dummy_data, 1, firstframe=600)
-    TOCL_ions_outer_processed = process_dummy_system(TOCL_ions_outer_dummy_data, 1, firstframe=600)
-
-    def plot_processed_data(inner_data, outer_data, cmax, cmap='Reds'):
-        plt.figure()
-        plt.scatter(inner_data.coordinates.rho, inner_data.coordinates.z, vmin=0, vmax=cmax, c=4 * inner_data.force, cmap=cmap)
-        plt.scatter(outer_data.coordinates.rho, outer_data.coordinates.z, vmin=0, vmax=cmax, c=4 * outer_data.force, cmap=cmap)
-        plt.xlabel("rho (nm)")
-        plt.ylabel("z (nm)")
-        plt.colorbar()
-        plt.show()
-
-    plot_processed_data(TOCL_ions_inner_processed, TOCL_ions_outer_processed, 0.35)
-    plot_processed_data(TOCL_inner_processed, TOCL_outer_processed, 0.35)
-    plot_processed_data(DOPE_inner_processed, DOPE_outer_processed, 0.35)
-    plot_processed_data(POPC_inner_processed, POPC_outer_processed, 0.35)
-
-    plt.figure()
-    plt.plot(POPC_inner_processed.coordinates.unified, 4 * POPC_inner_processed.force, 'r-', label='100% POPC')
-    plt.plot(DOPE_inner_processed.coordinates.unified, 4 * DOPE_inner_processed.force, 'r-', label='20% DOPE')
-    plt.plot(TOCL_inner_processed.coordinates.unified, 4 * TOCL_inner_processed.force, 'r-', label='20% TOCL')
-    plt.plot(TOCL_ions_inner_processed.coordinates.unified, 4 * TOCL_ions_inner_processed.force, 'r-', label='20% TOCL - ions')
-    plt.xlabel("unified coordinate (nm)")
-    plt.ylabel("Pressure (kJ/(mol nm^3)")
-    plt.legend()
+    # step 3 visualize results, profit
+    lipids = ("POPC", "DOPE", "TOCL")
+    read_dir = analysis_dir + "processed_data"
+    max_pressure = 0.35
+    geometries = (geometry.mito_dims(30, 10, 10, 56), )
+    for lipid in lipids:
+        for geo in geometries:
+            inner_data, outer_data = load_processed_data(read_dir, geo, lipid, dummy_zo)
+            plot_dummy_forces_spatial(inner_data, outer_data, max_pressure, title=string_id(lipid, geo, dummy_zo))
