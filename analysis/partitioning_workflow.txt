@@ -1,0 +1,1 @@
+This script details how to do analyze lipid partitioning in dummy particle systems
